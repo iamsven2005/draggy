@@ -53,7 +53,7 @@ export function BehaviorControlPanel({ isOpen, onToggle }: BehaviorControlPanelP
   }
 
   return (
-    <div className="fixed top-4 right-4 bg-black/90 text-white p-4 rounded-lg shadow-xl w-80 max-h-96 overflow-y-auto">
+    <div className="fixed inset-0 md:top-4 md:right-4 md:inset-auto bg-black/90 text-white p-4 rounded-lg shadow-xl md:w-80 md:max-h-96 overflow-y-auto z-50">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-bold">Behavior Control</h3>
         <button onClick={onToggle} className="text-gray-400 hover:text-white transition-colors">
@@ -152,6 +152,13 @@ export function BehaviorControlPanel({ isOpen, onToggle }: BehaviorControlPanelP
 
       <div className="mt-4 text-xs text-gray-500">
         Total behaviors: {behaviors.length} | Enabled: {behaviors.filter((b) => b.config.enabled).length}
+      </div>
+
+      {/* Mobile close button */}
+      <div className="mt-6 md:hidden">
+        <button onClick={onToggle} className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium">
+          Close Panel
+        </button>
       </div>
     </div>
   )

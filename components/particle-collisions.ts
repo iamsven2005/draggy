@@ -1,7 +1,10 @@
 import type { Particle, ParticleSystemState } from "../types/particle"
+import { hapticManager } from "../utils/haptic-feedback"
 
 export function handleParticleCollisions(particles: Particle[], systemState: ParticleSystemState): void {
   const collisionForce = systemState.isCircleFormation ? 0.1 : 0.5
+  let significantCollisionOccurred = false
+  let maxCollisionIntensity = 0
 
   for (let i = 0; i < particles.length; i++) {
     for (let j = i + 1; j < particles.length; j++) {
@@ -20,6 +23,20 @@ export function handleParticleCollisions(particles: Particle[], systemState: Par
         const normalX = dx / distance
         const normalY = dy / distance
 
+        // Calculate relative velocity for collision intensity
+        const relativeVelocityX = p2.vx - p1.vx
+        const relativeVelocityY = p2.vy - p1.vy
+        const relativeSpeed = Math.sqrt(relativeVelocityX * relativeVelocityX + relativeVelocityY * relativeVelocityY)
+
+        // Calculate collision intensity (0-1)
+        const collisionIntensity = Math.min(1, relativeSpeed / 10)
+
+        // Track the most significant collision
+        if (collisionIntensity > 0.2) {
+          significantCollisionOccurred = true
+          maxCollisionIntensity = Math.max(maxCollisionIntensity, collisionIntensity)
+        }
+
         p1.vx -= normalX * separationForce
         p1.vy -= normalY * separationForce
         p2.vx += normalX * separationForce
@@ -32,6 +49,11 @@ export function handleParticleCollisions(particles: Particle[], systemState: Par
         p2.y += normalY * separationDistance
       }
     }
+  }
+
+  // Trigger haptic feedback for significant collisions
+  if (significantCollisionOccurred) {
+    hapticManager.triggerCollision(maxCollisionIntensity)
   }
 }
 
