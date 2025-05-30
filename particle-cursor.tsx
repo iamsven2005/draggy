@@ -14,6 +14,7 @@ import { behaviorManager } from "./core/behavior-manager"
 import { loadAllBehaviors } from "./behaviors/behavior-loader"
 import { BehaviorControlPanel } from "./components/behavior-control-panel"
 import { MobileControls } from "./components/mobile-controls"
+import { KanbanBoard } from "./components/kanban-board"
 import { hapticManager, HapticPatterns } from "./utils/haptic-feedback"
 import type { BehaviorContext } from "./types/behavior-plugin"
 
@@ -21,6 +22,7 @@ export default function Component() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
   const [showBehaviorPanel, setShowBehaviorPanel] = useState(false)
+  const [showKanbanBoard, setShowKanbanBoard] = useState(false)
   const [hapticEnabled, setHapticEnabled] = useState(true)
   const isDraggingRef = useRef(false)
   const touchStartTimeRef = useRef(0)
@@ -31,6 +33,17 @@ export default function Component() {
   const ballRotationAngleRef = useRef(0)
   const ballRotationSpeedRef = useRef(PHYSICS_CONSTANTS.initialRotationSpeed)
   const lastBallClickTimeRef = useRef(0)
+
+  // Timer state
+  const [showTimerPanel, setShowTimerPanel] = useState(false)
+  const [timerMinutes, setTimerMinutes] = useState(5)
+  const [timerSeconds, setTimerSeconds] = useState(0)
+  const timerDurationRef = useRef(0) // in milliseconds
+  const timerStartTimeRef = useRef(0)
+  const timerIsRunningRef = useRef(false)
+  const timerIsAlarmingRef = useRef(false)
+  const alarmStartTimeRef = useRef(0)
+  const lastAlarmVibrateRef = useRef(0)
 
   const { isMobile, isTouchDevice } = useMobile()
   const { mouseRef, handleMouseMove, handleClick } = useMouse()
@@ -43,6 +56,91 @@ export default function Component() {
     exitCircleFormation,
     updateLastMoveTime,
   } = useParticleSystem()
+
+  // Format elapsed time as MM:SS.ms
+  const formatElapsedTime = (milliseconds: number): string => {
+    const totalSeconds = Math.floor(milliseconds / 1000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    const ms = Math.floor((milliseconds % 1000) / 10)
+
+    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`
+  }
+
+  // Format timer countdown as MM:SS
+  const formatTimerCountdown = (milliseconds: number): string => {
+    const totalSeconds = Math.ceil(milliseconds / 1000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+
+    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+  }
+
+  // Format current date and time
+  const formatDateTime = (): string => {
+    const now = new Date()
+    const options: Intl.DateTimeFormatOptions = {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }
+    return now.toLocaleDateString(undefined, options)
+  }
+
+  // Start timer
+  const startTimer = () => {
+    if (timerMinutes === 0 && timerSeconds === 0) return
+
+    timerDurationRef.current = (timerMinutes * 60 + timerSeconds) * 1000
+    timerStartTimeRef.current = Date.now()
+    timerIsRunningRef.current = true
+    timerIsAlarmingRef.current = false
+    setShowTimerPanel(false)
+
+    // Haptic feedback for timer start
+    hapticManager.trigger(HapticPatterns.SUCCESS)
+  }
+
+  // Stop timer/alarm
+  const stopTimer = () => {
+    timerIsRunningRef.current = false
+    timerIsAlarmingRef.current = false
+
+    // Haptic feedback for timer stop
+    hapticManager.trigger(HapticPatterns.MEDIUM_TAP)
+  }
+
+  // Reset timer
+  const resetTimer = () => {
+    timerIsRunningRef.current = false
+    timerIsAlarmingRef.current = false
+    timerStartTimeRef.current = 0
+    alarmStartTimeRef.current = 0
+
+    // Haptic feedback for timer reset
+    hapticManager.trigger(HapticPatterns.LIGHT_TAP)
+  }
+
+  // Get timer remaining time
+  const getTimerRemainingTime = (currentTime: number): number => {
+    if (!timerIsRunningRef.current) return 0
+
+    const elapsed = currentTime - timerStartTimeRef.current
+    const remaining = timerDurationRef.current - elapsed
+
+    return Math.max(0, remaining)
+  }
+
+  // Get overtime duration
+  const getOvertimeDuration = (currentTime: number): number => {
+    if (!timerIsAlarmingRef.current || alarmStartTimeRef.current === 0) return 0
+
+    return currentTime - alarmStartTimeRef.current
+  }
 
   // Check if mouse is out of bounds
   const checkMouseBounds = (x: number, y: number, canvas: HTMLCanvasElement): boolean => {
@@ -299,6 +397,12 @@ export default function Component() {
     const onClick = (e: MouseEvent) => {
       handleClick(e, canvas)
 
+      // If timer is alarming, stop it
+      if (timerIsAlarmingRef.current) {
+        stopTimer()
+        return
+      }
+
       // If in ball mode, accelerate rotation instead of toggling circle formation
       if (ballModeActiveRef.current) {
         accelerateBallRotation()
@@ -393,6 +497,12 @@ export default function Component() {
 
       // If it was a quick tap (not a drag)
       if (!wasDragging && touchDuration < 300) {
+        // If timer is alarming, stop it
+        if (timerIsAlarmingRef.current) {
+          stopTimer()
+          return
+        }
+
         // If in ball mode, accelerate rotation instead of toggling circle formation
         if (ballModeActiveRef.current) {
           accelerateBallRotation()
@@ -436,6 +546,28 @@ export default function Component() {
       lastTimeRef.current = currentTime
 
       ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+      // Update timer state
+      if (timerIsRunningRef.current) {
+        const remaining = getTimerRemainingTime(currentTime)
+
+        if (remaining <= 0 && !timerIsAlarmingRef.current) {
+          // Timer finished, start alarm
+          timerIsAlarmingRef.current = true
+          alarmStartTimeRef.current = currentTime
+          hapticManager.trigger(HapticPatterns.ERROR)
+        }
+      }
+
+      // Handle alarm vibrations
+      if (timerIsAlarmingRef.current) {
+        const timeSinceLastVibrate = currentTime - lastAlarmVibrateRef.current
+        if (timeSinceLastVibrate > 1000) {
+          // Vibrate every second during alarm
+          hapticManager.trigger(HapticPatterns.STRONG_TAP)
+          lastAlarmVibrateRef.current = currentTime
+        }
+      }
 
       // Check if mouse stopped moving
       const timeSinceLastMove = currentTime - systemStateRef.current.lastMoveTime
@@ -539,6 +671,88 @@ export default function Component() {
 
       // Handle particle-to-particle collisions
       handleParticleCollisions(particles, systemState)
+
+      // Draw date and time in background if in ball mode
+      if (ballModeActiveRef.current) {
+        const dateTimeText = formatDateTime()
+        ctx.font = "16px Arial"
+        ctx.fillStyle = "rgba(255, 255, 255, 0.1)"
+        ctx.textAlign = "center"
+        ctx.fillText(dateTimeText, canvas.width / 2, canvas.height - 30)
+      }
+
+      // Draw timer display (always visible when timer is running or alarming)
+      if (timerIsRunningRef.current || timerIsAlarmingRef.current) {
+        const timerX = canvas.width - 150
+        const timerY = 80
+        const timerWidth = 140
+        const timerHeight = timerIsAlarmingRef.current ? 80 : 60
+
+        // Draw timer background
+        ctx.fillStyle = timerIsAlarmingRef.current
+          ? `rgba(255, 0, 0, ${0.3 + Math.sin(currentTime * 0.01) * 0.2})`
+          : "rgba(0, 0, 0, 0.5)"
+        ctx.beginPath()
+        ctx.roundRect(timerX - timerWidth / 2, timerY - timerHeight / 2, timerWidth, timerHeight, 10)
+        ctx.fill()
+
+        // Draw timer border
+        ctx.strokeStyle = timerIsAlarmingRef.current ? "rgba(255, 0, 0, 0.8)" : "rgba(34, 197, 94, 0.8)"
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.roundRect(timerX - timerWidth / 2, timerY - timerHeight / 2, timerWidth, timerHeight, 10)
+        ctx.stroke()
+
+        if (timerIsAlarmingRef.current) {
+          // Alarm mode
+          const overtimeDuration = getOvertimeDuration(currentTime)
+
+          // Draw alarm label
+          ctx.font = "12px Arial"
+          ctx.fillStyle = "rgba(255, 255, 255, 0.9)"
+          ctx.textAlign = "center"
+          ctx.fillText("⏰ TIME'S UP!", timerX, timerY - 20)
+
+          // Draw overtime
+          ctx.font = "14px monospace"
+          ctx.fillStyle = "rgba(255, 100, 100, 0.9)"
+          ctx.fillText(`+${formatElapsedTime(overtimeDuration)}`, timerX, timerY)
+
+          // Draw stop instruction
+          ctx.font = "10px Arial"
+          ctx.fillStyle = "rgba(255, 255, 255, 0.7)"
+          ctx.fillText(`${isTouchDevice ? "Tap" : "Click"} to stop`, timerX, timerY + 20)
+        } else {
+          // Countdown mode
+          const remaining = getTimerRemainingTime(currentTime)
+
+          // Draw timer label
+          ctx.font = "10px Arial"
+          ctx.fillStyle = "rgba(255, 255, 255, 0.6)"
+          ctx.textAlign = "center"
+          ctx.fillText("TIMER", timerX, timerY - 15)
+
+          // Draw countdown
+          ctx.font = "18px monospace"
+          ctx.fillStyle = remaining < 60000 ? "rgba(255, 200, 100, 0.9)" : "rgba(255, 255, 255, 0.9)"
+          ctx.fillText(formatTimerCountdown(remaining), timerX, timerY + 5)
+
+          // Draw progress bar
+          const progress = 1 - remaining / timerDurationRef.current
+          const barWidth = timerWidth - 20
+          const barHeight = 4
+          const barX = timerX - barWidth / 2
+          const barY = timerY + 20
+
+          // Background
+          ctx.fillStyle = "rgba(255, 255, 255, 0.2)"
+          ctx.fillRect(barX, barY, barWidth, barHeight)
+
+          // Progress
+          ctx.fillStyle = remaining < 60000 ? "rgba(255, 200, 100, 0.8)" : "rgba(34, 197, 94, 0.8)"
+          ctx.fillRect(barX, barY, barWidth * progress, barHeight)
+        }
+      }
 
       // Draw trail connections (only if not in ball mode)
       if (!isMouseStopped && !systemState.isCircleFormation && !ballModeActiveRef.current) {
@@ -671,6 +885,52 @@ export default function Component() {
           ? `CENTRIFUGAL: ${Math.round(speedPercentage)}%`
           : `Speed: ${Math.round(speedPercentage)}%`
         ctx.fillText(speedText, centerX, speedBarY + 20)
+
+        // Draw stopwatch
+        const elapsedTime = currentTime - ballModeStartTimeRef.current
+        const formattedTime = formatElapsedTime(elapsedTime)
+
+        // Create stopwatch background
+        const stopwatchX = centerX
+        const stopwatchY = 80
+        const stopwatchWidth = 120
+        const stopwatchHeight = 40
+
+        // Draw stopwatch background
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)"
+        ctx.beginPath()
+        ctx.roundRect(
+          stopwatchX - stopwatchWidth / 2,
+          stopwatchY - stopwatchHeight / 2,
+          stopwatchWidth,
+          stopwatchHeight,
+          10,
+        )
+        ctx.fill()
+
+        // Draw stopwatch border
+        ctx.strokeStyle = isHighSpeed ? "rgba(255, 100, 100, 0.8)" : "rgba(147, 51, 234, 0.8)"
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.roundRect(
+          stopwatchX - stopwatchWidth / 2,
+          stopwatchY - stopwatchHeight / 2,
+          stopwatchWidth,
+          stopwatchHeight,
+          10,
+        )
+        ctx.stroke()
+
+        // Draw stopwatch label
+        ctx.font = "10px Arial"
+        ctx.fillStyle = "rgba(255, 255, 255, 0.6)"
+        ctx.textAlign = "center"
+        ctx.fillText("AWAY TIME", stopwatchX, stopwatchY - 8)
+
+        // Draw stopwatch time
+        ctx.font = "18px monospace"
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)"
+        ctx.fillText(formattedTime, stopwatchX, stopwatchY + 12)
       }
 
       // Render particles
@@ -764,6 +1024,77 @@ export default function Component() {
 
       <BehaviorControlPanel isOpen={showBehaviorPanel} onToggle={() => setShowBehaviorPanel(!showBehaviorPanel)} />
 
+      <KanbanBoard isOpen={showKanbanBoard} onToggle={() => setShowKanbanBoard(!showKanbanBoard)} />
+
+      {/* Timer Panel */}
+      {showTimerPanel && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-xl font-bold text-white mb-4">Set Timer</h3>
+
+            <div className="flex gap-4 mb-6">
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Minutes</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={timerMinutes}
+                  onChange={(e) => setTimerMinutes(Number.parseInt(e.target.value) || 0)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Seconds</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={timerSeconds}
+                  onChange={(e) => setTimerSeconds(Number.parseInt(e.target.value) || 0)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={startTimer}
+                disabled={timerMinutes === 0 && timerSeconds === 0}
+                className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded-md transition-colors"
+              >
+                Start Timer
+              </button>
+              <button
+                onClick={() => setShowTimerPanel(false)}
+                className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 rounded-md transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {(timerIsRunningRef.current || timerIsAlarmingRef.current) && (
+              <div className="mt-4 pt-4 border-t border-gray-600">
+                <div className="flex gap-3">
+                  <button
+                    onClick={stopTimer}
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md transition-colors"
+                  >
+                    Stop Timer
+                  </button>
+                  <button
+                    onClick={resetTimer}
+                    className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-md transition-colors"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {isTouchDevice && (
         <MobileControls
           onToggleCircleFormation={handleToggleCircleFormation}
@@ -772,6 +1103,14 @@ export default function Component() {
           onToggleHaptic={toggleHaptic}
         />
       )}
+
+      {/* Timer Button */}
+      <button
+        onClick={() => setShowTimerPanel(true)}
+        className="fixed top-4 right-20 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-lg transition-colors"
+      >
+        ⏰ Timer
+      </button>
 
       <div
         className={`absolute top-4 left-4 text-white text-sm bg-black/50 p-3 rounded max-w-xs ${isMobile ? "hidden" : "block"}`}
@@ -794,6 +1133,15 @@ export default function Component() {
         </p>
         <p>
           • <strong>{isTouchDevice ? "Tap" : "Click"} during ball mode to accelerate rotation!</strong>
+        </p>
+        <p>
+          • <strong>Ball mode shows a stopwatch and current date/time!</strong>
+        </p>
+        <p>
+          • <strong>Use the Timer button to set reminders!</strong>
+        </p>
+        <p>
+          • <strong>Use the Kanban board to manage your tasks!</strong>
         </p>
         <p>
           •{" "}
