@@ -1021,7 +1021,7 @@ export default function Component() {
   return (
     <div className="w-full h-screen bg-gray-900 overflow-hidden">
       <canvas ref={canvasRef} className={`w-full h-full ${isTouchDevice ? "" : "cursor-none"}`} />
-
+      <div className="flex gap-2">
       <BehaviorControlPanel isOpen={showBehaviorPanel} onToggle={() => setShowBehaviorPanel(!showBehaviorPanel)} />
 
       <KanbanBoard isOpen={showKanbanBoard} onToggle={() => setShowKanbanBoard(!showKanbanBoard)} />
@@ -1111,7 +1111,7 @@ export default function Component() {
       >
         ⏰ Timer
       </button>
-
+</div>
       <div
         className={`absolute top-4 left-4 text-white text-sm bg-black/50 p-3 rounded max-w-xs ${isMobile ? "hidden" : "block"}`}
       >
